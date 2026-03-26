@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 4
+names: ['fire', 'light', 'nonfire', 'smoke']
+
+roboflow:
+  workspace: iron-wolf-yvovn
+  project: fire-detection-9b7sg
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/iron-wolf-yvovn/fire-detection-9b7sg/dataset/1

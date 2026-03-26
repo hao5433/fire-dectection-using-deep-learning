@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Model weights (large files)
+*.pth
+*.onnx
+*.engine
+models/
+yolo11*.pt          # pretrained base models
+runs/fire_detection/weights/epoch*.pt   # checkpoint files (lớn, không cần)
+runs/fire_detection/weights/last.pt     # last checkpoint (không cần)
+
+# Giữ lại 2 file model chính để deploy:
+# runs/fire_detection/weights/best_local.pt  ← KEEP
+# runs/fire_detection/weights/best_kaggle.pt ← KEEP
+
+# Training outputs (large images, không cần cho deploy)
+output/
+runs/fire_detection/train_batch*.jpg
+runs/fire_detection/val_batch*.jpg
+
+# Dataset (too large for git)
+
+dataset/
+
+# Jupyter
+.ipynb_checkpoints/
+
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
