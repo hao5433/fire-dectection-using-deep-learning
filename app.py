@@ -11,6 +11,7 @@ from pathlib import Path
 from ultralytics import YOLO
 import tempfile
 import os
+import io
 
 # ==================== CONFIG ====================
 PAGE_TITLE = "🔥 Fire Detection System"
@@ -198,6 +199,10 @@ tab1, tab2, tab3 = st.tabs(["🖼️ Ảnh tĩnh", "🎥 Video", "📷 Webcam (L
 with tab1:
     col1, col2 = st.columns([1, 1], gap="large")
 
+    # State để lưu ảnh đã chọn
+    image_np_bgr = None
+    image_pil_display = None
+
     with col1:
         st.markdown("#### 📤 Upload ảnh")
         uploaded = st.file_uploader(
@@ -209,30 +214,33 @@ with tab1:
         # Ảnh mẫu từ output/kaggle_results
         st.markdown("**Hoặc dùng ảnh mẫu từ kết quả thực nghiệm:**")
         sample_dir = Path("output/kaggle_results")
-        sample_images = list(sample_dir.glob("*.jpg"))[:6] if sample_dir.exists() else []
+        sample_images = sorted(sample_dir.glob("*.jpg"))[:6] if sample_dir.exists() else []
 
+        selected_sample = None
         if sample_images:
-            sample_names = [p.name[:30] + "..." for p in sample_images]
+            sample_names = [p.name[:35] for p in sample_images]
             selected_sample = st.selectbox("Chọn ảnh mẫu", ["— Không dùng —"] + sample_names)
-            if selected_sample != "— Không dùng —":
-                idx = sample_names.index(selected_sample)
-                with open(sample_images[idx], "rb") as f:
-                    uploaded = f
-                    image_pil = Image.open(sample_images[idx]).convert("RGB")
-                    image_np = np.array(image_pil)
-                    image_np_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-                    st.image(image_pil, caption="Ảnh gốc", use_container_width=True)
 
-        if uploaded is not None and not isinstance(uploaded, Path):
-            image_pil = Image.open(uploaded).convert("RGB")
-            image_np = np.array(image_pil)
+        # Ưu tiên: uploaded file > sample image
+        if uploaded is not None:
+            img_bytes = uploaded.read()
+            image_pil_display = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            image_np = np.array(image_pil_display)
             image_np_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-            st.image(image_pil, caption="Ảnh gốc", use_container_width=True)
+            st.image(image_pil_display, caption="Ảnh gốc", use_container_width=True)
+        elif selected_sample and selected_sample != "— Không dùng —":
+            idx = sample_names.index(selected_sample)
+            with open(sample_images[idx], "rb") as f:
+                img_bytes = f.read()
+            image_pil_display = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            image_np = np.array(image_pil_display)
+            image_np_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+            st.image(image_pil_display, caption="Ảnh mẫu", use_container_width=True)
 
     with col2:
         st.markdown("#### 🔍 Kết quả Detection")
 
-        if 'image_np_bgr' in dir() or uploaded is not None:
+        if image_np_bgr is not None:
             try:
                 with st.spinner("Đang phân tích..."):
                     annotated_rgb, detections = run_inference(
@@ -267,6 +275,7 @@ with tab1:
 
             except Exception as e:
                 st.error(f"Lỗi inference: {e}")
+                st.exception(e)
         else:
             st.info("👆 Upload ảnh hoặc chọn ảnh mẫu để bắt đầu")
 

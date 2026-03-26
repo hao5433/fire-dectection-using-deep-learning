@@ -1,21 +1,21 @@
-# Requirements for Fire Detection Project
+# Requirements for Fire Detection Project — Streamlit Cloud
 
 # Web Demo
 streamlit>=1.32.0
 
-# Deep Learning Framework
-torch>=2.0.0
-torchvision>=0.15.0
+# Deep Learning Framework (CPU-only để nhẹ hơn trên cloud)
+torch==2.1.0+cpu
+torchvision==0.16.0+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
 
 # YOLOv11
 ultralytics>=8.0.0
 
-# Computer Vision
-opencv-python>=4.8.0
-opencv-contrib-python>=4.8.0
+# Computer Vision (headless để tránh lỗi display trên server)
+opencv-python-headless>=4.8.0
 
 # Data Processing
-numpy>=1.24.0
+numpy>=1.24.0,<2.0.0
 pandas>=2.0.0
 
 # Visualization
@@ -28,14 +28,3 @@ pyyaml>=6.0
 
 # Progress Bar
 tqdm>=4.65.0
-
-# Optional: For GPU support
-# torch-cuda (install separately based on CUDA version)
-
-# Optional: Export formats
-# onnx>=1.14.0
-# onnxruntime>=1.15.0
-
-# Optional: Video processing
-# imageio>=2.31.0
-# imageio-ffmpeg>=0.4.8
