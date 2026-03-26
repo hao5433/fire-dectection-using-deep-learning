@@ -1,8 +1,5 @@
---find-links https://download.pytorch.org/whl/torch_stable.html
-torch==2.1.2+cpu
-torchvision==0.16.2+cpu
-ultralytics==8.3.106
-opencv-python-headless==4.10.0.84
+streamlit>=1.32.0
+onnxruntime>=1.17.0
+opencv-python-headless>=4.8.0
 pillow>=10.0.0
 numpy>=1.24.0,<2.0.0
-streamlit>=1.32.0

@@ -1,6 +1,6 @@
 """
 🔥 Fire Detection System — Streamlit Demo
-Phát hiện đám cháy sử dụng YOLO11
+Phát hiện đám cháy sử dụng YOLO11 (ONNX Runtime — không cần PyTorch)
 """
 
 import streamlit as st
@@ -8,16 +8,16 @@ import cv2
 import numpy as np
 from PIL import Image
 from pathlib import Path
-from ultralytics import YOLO
 import tempfile
 import os
 import io
+import onnxruntime as ort
 
 # ==================== CONFIG ====================
 PAGE_TITLE = "🔥 Fire Detection System"
 MODEL_OPTIONS = {
-    "YOLO11n — Local (CPU, nhanh)": "runs/fire_detection/weights/best_local.pt",
-    "YOLO11s — Kaggle (chính xác hơn)": "runs/fire_detection/weights/best_kaggle.pt",
+    "YOLO11n — Local (CPU, nhanh)": "runs/fire_detection/weights/best_local.onnx",
+    "YOLO11s — Kaggle (chính xác hơn)": "runs/fire_detection/weights/best_kaggle.onnx",
 }
 CLASS_NAMES = ['fire', 'light', 'nonfire', 'smoke']
 CLASS_COLORS_RGB = {
@@ -93,37 +93,117 @@ st.markdown("""
 # ==================== MODEL LOADER ====================
 @st.cache_resource
 def load_model(model_path: str):
-    """Load YOLO model với cache để không reload mỗi lần"""
+    """Load ONNX model với cache — không cần PyTorch"""
     if not Path(model_path).exists():
         return None
-    return YOLO(model_path)
+    sess_options = ort.SessionOptions()
+    sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = ort.InferenceSession(
+        model_path,
+        sess_options=sess_options,
+        providers=["CPUExecutionProvider"],
+    )
+    return session
 
 # ==================== INFERENCE ====================
-def run_inference(model, image: np.ndarray, conf: float, iou: float):
-    """Chạy detection và trả về ảnh đã annotate + detections"""
-    results = model.predict(
-        source=image,
-        conf=conf,
-        iou=iou,
-        verbose=False,
-        augment=True,
-    )
-    result = results[0]
-    annotated = result.plot()  # BGR numpy array
-    annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
+def preprocess(image_bgr: np.ndarray, input_size: int = 640):
+    """Resize + normalize ảnh về tensor NCHW float32"""
+    h, w = image_bgr.shape[:2]
+    # Letterbox resize
+    scale = min(input_size / h, input_size / w)
+    new_h, new_w = int(h * scale), int(w * scale)
+    resized = cv2.resize(image_bgr, (new_w, new_h))
+    pad_h = (input_size - new_h) // 2
+    pad_w = (input_size - new_w) // 2
+    canvas = np.full((input_size, input_size, 3), 114, dtype=np.uint8)
+    canvas[pad_h:pad_h+new_h, pad_w:pad_w+new_w] = resized
+    # BGR → RGB, HWC → NCHW, /255
+    tensor = canvas[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
+    return np.expand_dims(tensor, 0), scale, pad_w, pad_h
 
+def xywh2xyxy(boxes):
+    """Convert cx,cy,w,h → x1,y1,x2,y2"""
+    x1 = boxes[:, 0] - boxes[:, 2] / 2
+    y1 = boxes[:, 1] - boxes[:, 3] / 2
+    x2 = boxes[:, 0] + boxes[:, 2] / 2
+    y2 = boxes[:, 1] + boxes[:, 3] / 2
+    return np.stack([x1, y1, x2, y2], axis=1)
+
+def nms(boxes_xyxy, scores, iou_thresh):
+    """Simple NMS"""
+    x1, y1, x2, y2 = boxes_xyxy[:, 0], boxes_xyxy[:, 1], boxes_xyxy[:, 2], boxes_xyxy[:, 3]
+    areas = (x2 - x1) * (y2 - y1)
+    order = scores.argsort()[::-1]
+    keep = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(i)
+        xx1 = np.maximum(x1[i], x1[order[1:]])
+        yy1 = np.maximum(y1[i], y1[order[1:]])
+        xx2 = np.minimum(x2[i], x2[order[1:]])
+        yy2 = np.minimum(y2[i], y2[order[1:]])
+        w = np.maximum(0, xx2 - xx1)
+        h = np.maximum(0, yy2 - yy1)
+        inter = w * h
+        iou = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
+        order = order[1:][iou <= iou_thresh]
+    return keep
+
+def run_inference(session, image_bgr: np.ndarray, conf: float, iou: float):
+    """Chạy ONNX detection, trả về ảnh annotated + detections"""
+    orig_h, orig_w = image_bgr.shape[:2]
+    input_size = 640
+    tensor, scale, pad_w, pad_h = preprocess(image_bgr, input_size)
+
+    input_name = session.get_inputs()[0].name
+    outputs = session.run(None, {input_name: tensor})
+    # YOLO ONNX output shape: [1, 8, 8400] — (batch, 4+num_classes, anchors)
+    pred = outputs[0][0]  # shape (8, 8400)
+    pred = pred.T          # shape (8400, 8)
+
+    boxes_xywh = pred[:, :4]
+    class_scores = pred[:, 4:]  # shape (8400, 4)
+    class_ids = np.argmax(class_scores, axis=1)
+    confidences = class_scores[np.arange(len(class_scores)), class_ids]
+
+    # Filter by confidence
+    mask = confidences >= conf
+    if mask.sum() == 0:
+        return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB), []
+
+    boxes_xywh = boxes_xywh[mask]
+    confidences = confidences[mask]
+    class_ids = class_ids[mask]
+
+    # Convert to xyxy & scale back to original image
+    boxes_xyxy = xywh2xyxy(boxes_xywh)
+    boxes_xyxy[:, [0, 2]] = (boxes_xyxy[:, [0, 2]] - pad_w) / scale
+    boxes_xyxy[:, [1, 3]] = (boxes_xyxy[:, [1, 3]] - pad_h) / scale
+    boxes_xyxy = np.clip(boxes_xyxy, 0, [orig_w, orig_h, orig_w, orig_h])
+
+    # NMS
+    keep = nms(boxes_xyxy, confidences, iou)
+    boxes_xyxy = boxes_xyxy[keep]
+    confidences = confidences[keep]
+    class_ids = class_ids[keep]
+
+    # Draw annotations
+    annotated = image_bgr.copy()
     detections = []
-    for box in result.boxes:
-        cls_id = int(box.cls[0])
+    for i, (box, conf_val, cls_id) in enumerate(zip(boxes_xyxy, confidences, class_ids)):
         cls_name = CLASS_NAMES[cls_id] if cls_id < len(CLASS_NAMES) else f"class_{cls_id}"
-        conf_val = float(box.conf[0])
-        xyxy = box.xyxy[0].tolist()
-        detections.append({
-            'class': cls_name,
-            'confidence': conf_val,
-            'bbox': xyxy,
-        })
+        color_rgb = CLASS_COLORS_RGB.get(cls_name, (200, 200, 200))
+        color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
+        x1, y1, x2, y2 = box.astype(int)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color_bgr, 2)
+        label = f"{cls_name} {conf_val:.2f}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        cv2.rectangle(annotated, (x1, y1 - th - 6), (x1 + tw + 4, y1), color_bgr, -1)
+        cv2.putText(annotated, label, (x1 + 2, y1 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        detections.append({'class': cls_name, 'confidence': float(conf_val), 'bbox': box.tolist()})
 
+    annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
     return annotated_rgb, detections
 
 # ==================== SIDEBAR ====================
